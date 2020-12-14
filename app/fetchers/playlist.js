@@ -6,77 +6,121 @@ class PlaylistFetcher {
     this.getOriginalURL = () => _url
   }
 
-  static async getChannelPlaylistLast (channelId) {
-    const channelUrl = `https://youtube.com/channel/${channelId}/playlists?flow=grid&view=1&pbj=1`
-    let channelPageResponse = await helper.makeChannelRequest(channelUrl)
-
-    if (channelPageResponse.error) {
-      // Try again as a user channel
-      const userUrl = `https://youtube.com/user/${channelId}/playlists?flow=grid&view=1&pbj=1`
-      channelPageResponse = await helper.makeChannelRequest(userUrl)
+  static async doGetChannelPlaylist(channelId, tryChannelType, sort) {
+    let channelPageResponse;
+    if (tryChannelType !== 'defaultOrTopic' && tryChannelType !== 'topic' && tryChannelType !== 'gaming') {
+      tryChannelType = 'defaultOrTopic'
+    }
+    if (tryChannelType === 'defaultOrTopic' || tryChannelType === 'topic') {
+      const channelUrl = `https://youtube.com/channel/${channelId}/playlists?flow=grid&view=1&pbj=1${sort ? '&sort=' + sort : ''}`
+      channelPageResponse = await helper.makeChannelRequest(channelUrl)
 
       if (channelPageResponse.error) {
-        return Promise.reject(channelPageResponse.message)
+        // Try again as a user channel
+        const userUrl = `https://youtube.com/user/${channelId}/playlists?flow=grid&view=1&pbj=1${sort ? '&sort=' + sort : ''}`
+        channelPageResponse = await helper.makeChannelRequest(userUrl)
+      }
+    }
+    else if (tryChannelType === 'gaming') {
+      const channelUrl = `https://youtube.com/channel/${channelId}/letsplay?flow=grid&view=1&pbj=1${sort ? '&sort=' + sort : ''}`
+      channelPageResponse = await helper.makeChannelRequest(channelUrl)
+    }
+
+    if (channelPageResponse.error) {
+      return Promise.reject(channelPageResponse.message)
+    }
+
+    return await this.parseChannelPlaylistResponse(channelPageResponse, tryChannelType)
+  }
+
+  static async getChannelPlaylist(channelId, sort) {
+    // The fun part about topic channels is that playlists don't always get returned on the first try.
+    // You can even verify this on YouTube site.
+    // So for topic channels, we try up to 5 times before giving up.
+    const tries = ['defaultOrTopic', 'gaming', 'topic', 'topic', 'topic', 'topic'];
+
+    let result = null;
+    while (!result && tries.length) {
+      try {
+        result = await this.doGetChannelPlaylist(channelId, tries.shift(), sort);
+      } catch (e) {
+        result = null;
       }
     }
 
-    return await this.parseChannelPlaylistResponse(channelPageResponse)
-  }
-
-  static async getChannelPlaylistOldest (channelId) {
-    const channelUrl = `https://youtube.com/channel/${channelId}/playlists?view=1&sort=da&flow=grid&pbj=1`
-    let channelPageResponse = await helper.makeChannelRequest(channelUrl)
-
-    if (channelPageResponse.error) {
-      // Try again as a user channel
-      const userUrl = `https://youtube.com/user/${channelId}/playlists?view=1&sort=da&flow=grid&pbj=1`
-      channelPageResponse = await helper.makeChannelRequest(userUrl)
-
-      if (channelPageResponse.error) {
-        return Promise.reject(channelPageResponse.message)
-      }
-    }
-
-    return await this.parseChannelPlaylistResponse(channelPageResponse)
-  }
-
-  static async getChannelPlaylistNewest (channelId) {
-    const channelUrl = `https://youtube.com/channel/${channelId}/playlists?view=1&sort=dd&flow=grid&pbj=1`
-    let channelPageResponse = await helper.makeChannelRequest(channelUrl)
-
-    if (channelPageResponse.error) {
-      // Try again as a user channel
-      const userUrl = `https://youtube.com/user/${channelId}/playlists?view=1&sort=dd&flow=grid&pbj=1`
-      channelPageResponse = await helper.makeChannelRequest(userUrl)
-
-      if (channelPageResponse.error) {
-        return Promise.reject(channelPageResponse.message)
-      }
-    }
-
-    return await this.parseChannelPlaylistResponse(channelPageResponse)
-  }
-
-  static async parseChannelPlaylistResponse (response) {
-    const channelMetaData = response.data[1].response.metadata.channelMetadataRenderer
-    const channelName = channelMetaData.title
-    const channelId = channelMetaData.externalId
-
-    const channelInfo = {
-      channelId: channelId,
-      channelName: channelName,
-      channelUrl: `https://youtube.com/channel/${channelId}`
-    }
-
-    const playlistData = response.data[1].response.contents.twoColumnBrowseResultsRenderer.tabs[2].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].gridRenderer
-
-    if (typeof (playlistData) === 'undefined') {
+    if (!result) {
       return {
         continuation: null,
         items: []
       }
     }
 
+    return result;
+  }
+
+  static async getChannelPlaylistLast (channelId) {
+    return await this.getChannelPlaylist(channelId);
+  }
+
+  static async getChannelPlaylistOldest (channelId) {
+    return await this.getChannelPlaylist(channelId, 'da');
+  }
+
+  static async getChannelPlaylistNewest (channelId) {
+    return await this.getChannelPlaylist(channelId, 'dd');
+  }
+
+  static async parseChannelPlaylistResponse (response, tryChannelType) {
+    let channelInfo;
+    if (tryChannelType === 'defaultOrTopic' || tryChannelType === 'topic') {
+      const channelMetaData = response.data[1].response.metadata.channelMetadataRenderer
+      const channelName = channelMetaData.title
+      const channelId = channelMetaData.externalId
+  
+      channelInfo = {
+        channelId: channelId,
+        channelName: channelName,
+        channelUrl: `https://youtube.com/channel/${channelId}`
+      }
+    }
+    else if (tryChannelType === 'gaming') {
+      const channelMetaData = response.data[1].response.microformat.microformatDataRenderer
+      channelInfo = {
+        channelId: response.data[1].endpoint.browseEndpoint.browseId,
+        channelName: channelMetaData.title,
+        channelUrl: channelMetaData.urlCanonical
+      }
+    }
+    let playlistData, assumeChannelType
+    if (tryChannelType === 'defaultOrTopic' || tryChannelType === 'topic') {
+      const tryGetFromTab = (tabIndex) => {
+        try {
+          return response.data[1].response.contents.twoColumnBrowseResultsRenderer.tabs[tabIndex].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].gridRenderer
+        } catch (e) {
+          return null
+        }
+      }
+      // Assume this is topic channel and get from second tab
+      assumeChannelType = 'topic'
+      playlistData = tryGetFromTab(1)
+      if (!playlistData && tryChannelType === 'defaultOrTopic') {
+        // If non-topic channel, then third tab should contain playlist data
+        assumeChannelType = 'default'
+        playlistData = tryGetFromTab(2)
+      }
+    }
+    else if (tryChannelType === 'gaming') {
+      try {
+        assumeChannelType = 'gaming'
+        playlistData = response.data[1].response.contents.twoColumnBrowseResultsRenderer.tabs[4].tabRenderer.content.sectionListRenderer.contents[0].itemSectionRenderer.contents[0].shelfRenderer.content.gridRenderer;
+      } catch (e) {
+        playlistData = null;
+      }
+    }
+
+    if (!playlistData) {
+      return null;
+    }
     const playlistItems = playlistData.items.filter((playlist) => {
       return typeof (playlist.gridShowRenderer) === 'undefined'
     }).map((playlist) => {
@@ -86,7 +130,10 @@ class PlaylistFetcher {
     let continuation = null
 
     if (typeof (playlistData.continuations) !== 'undefined') {
-      continuation = playlistData.continuations[0].nextContinuationData.continuation
+      continuation = JSON.stringify({
+        token: playlistData.continuations[0].nextContinuationData.continuation,
+        channelType: assumeChannelType
+      });
     }
 
     return {

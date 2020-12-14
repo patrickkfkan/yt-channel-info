@@ -31,86 +31,116 @@ class YoutubeGrabber {
       return Promise.reject(alert)
     }
 
-    const channelMetaData = channelPageResponse.data[1].response.metadata.channelMetadataRenderer
-    const channelHeaderData = channelPageResponse.data[1].response.header.c4TabbedHeaderRenderer
-    const channelContentsData = channelPageResponse.data[1].response.contents.twoColumnBrowseResultsRenderer
+    let channelInfo
+    // Try parse as default or topic channels
+    try {
+      const channelMetaData = channelPageResponse.data[1].response.metadata.channelMetadataRenderer
+      const channelHeaderData = channelPageResponse.data[1].response.header.c4TabbedHeaderRenderer
+      const channelContentsData = channelPageResponse.data[1].response.contents.twoColumnBrowseResultsRenderer
 
-    let relatedChannels = []
+      let relatedChannels = []
 
-    if (typeof (channelContentsData.secondaryContents) !== 'undefined') {
-      const featuredChannels = channelContentsData.secondaryContents.browseSecondaryContentsRenderer.contents[0].verticalChannelSectionRenderer.items
+      if (typeof (channelContentsData.secondaryContents) !== 'undefined') {
+        const featuredChannels = channelContentsData.secondaryContents.browseSecondaryContentsRenderer.contents[0].verticalChannelSectionRenderer.items
 
-      relatedChannels = featuredChannels.map((channel) => {
-        const author = channel.miniChannelRenderer
-        let channelName
+        relatedChannels = featuredChannels.map((channel) => {
+          const author = channel.miniChannelRenderer
+          let channelName
 
-        if (typeof (author.title.runs) !== 'undefined') {
-          channelName = author.title.runs[0].text
-        } else {
-          channelName = author.title.simpleText
-        }
+          if (typeof (author.title.runs) !== 'undefined') {
+            channelName = author.title.runs[0].text
+          } else {
+            channelName = author.title.simpleText
+          }
 
-        return {
-          author: channelName,
-          authorId: author.channelId,
-          authorUrl: author.navigationEndpoint.browseEndpoint.canonicalBaseUrl,
-          authorThumbnails: author.thumbnail.thumbnails,
-        }
-      })
-    }
-
-    let subscriberText
-    if (channelHeaderData.subscriberCountText) {
-      if (typeof (channelHeaderData.subscriberCountText.runs) !== 'undefined') {
-        subscriberText = channelHeaderData.subscriberCountText.runs[0].text
-      } else {
-        subscriberText = channelHeaderData.subscriberCountText.simpleText
+          return {
+            author: channelName,
+            authorId: author.channelId,
+            authorUrl: author.navigationEndpoint.browseEndpoint.canonicalBaseUrl,
+            authorThumbnails: author.thumbnail.thumbnails,
+          }
+        })
       }
-    } else {
-      subscriberText = '0 subscribers'
+
+      let subscriberText
+      if (channelHeaderData.subscriberCountText) {
+        if (typeof (channelHeaderData.subscriberCountText.runs) !== 'undefined') {
+          subscriberText = channelHeaderData.subscriberCountText.runs[0].text
+        } else {
+          subscriberText = channelHeaderData.subscriberCountText.simpleText
+        }
+      } else {
+        subscriberText = '0 subscribers'
+      }
+
+      let bannerThumbnails = null
+
+      if (typeof (channelHeaderData.banner) !== 'undefined') {
+        bannerThumbnails = channelHeaderData.banner.thumbnails
+      }
+
+      const subscriberSplit = subscriberText.split(' ')
+      const subscriberMultiplier = subscriberSplit[0].substring(subscriberSplit[0].length - 1).toLowerCase()
+
+      let subscriberNumber
+      if (typeof (parseFloat(subscriberMultiplier)) === 'undefined') {
+        subscriberNumber = parseFloat(subscriberText.substring(0, subscriberSplit[0].length - 1))
+      } else {
+        subscriberNumber = parseFloat(subscriberSplit[0])
+      }
+
+      let subscriberCount
+
+      switch (subscriberMultiplier) {
+        case 'k':
+          subscriberCount = subscriberNumber * 1000
+          break
+        case 'm':
+          subscriberCount = subscriberNumber * 1000000
+          break
+        default:
+          subscriberCount = subscriberNumber
+      }
+
+      channelInfo = {
+        author: channelMetaData.title,
+        authorId: channelMetaData.externalId,
+        authorUrl: channelMetaData.vanityChannelUrl,
+        authorBanners: bannerThumbnails,
+        authorThumbnails: channelHeaderData.avatar.thumbnails,
+        subscriberText: subscriberText,
+        subscriberCount: subscriberCount,
+        description: channelMetaData.description,
+        isFamilyFriendly: channelMetaData.isFamilySafe,
+        relatedChannels: relatedChannels,
+        allowedRegions: channelMetaData.availableCountryCodes
+      }
+    } catch (e) {
+      channelInfo = null
     }
 
-    let bannerThumbnails = null
-
-    if (typeof (channelHeaderData.banner) !== 'undefined') {
-      bannerThumbnails = channelHeaderData.banner.thumbnails
-    }
-
-    const subscriberSplit = subscriberText.split(' ')
-    const subscriberMultiplier = subscriberSplit[0].substring(subscriberSplit[0].length - 1).toLowerCase()
-
-    let subscriberNumber
-    if (typeof (parseFloat(subscriberMultiplier)) === 'undefined') {
-      subscriberNumber = parseFloat(subscriberText.substring(0, subscriberSplit[0].length - 1))
-    } else {
-      subscriberNumber = parseFloat(subscriberSplit[0])
-    }
-
-    let subscriberCount
-
-    switch (subscriberMultiplier) {
-      case 'k':
-        subscriberCount = subscriberNumber * 1000
-        break
-      case 'm':
-        subscriberCount = subscriberNumber * 1000000
-        break
-      default:
-        subscriberCount = subscriberNumber
-    }
-
-    const channelInfo = {
-      author: channelMetaData.title,
-      authorId: channelMetaData.externalId,
-      authorUrl: channelMetaData.vanityChannelUrl,
-      authorBanners: bannerThumbnails,
-      authorThumbnails: channelHeaderData.avatar.thumbnails,
-      subscriberText: subscriberText,
-      subscriberCount: subscriberCount,
-      description: channelMetaData.description,
-      isFamilyFriendly: channelMetaData.isFamilySafe,
-      relatedChannels: relatedChannels,
-      allowedRegions: channelMetaData.availableCountryCodes
+    if (!channelInfo) {
+      // Try parse as gaming channel
+      try {
+        const header = channelPageResponse.data[1].response.header.interactiveTabbedHeaderRenderer
+        const microformat = channelPageResponse.data[1].response.microformat.microformatDataRenderer
+        const channelId = channelPageResponse.data[1].response.contents.twoColumnBrowseResultsRenderer.tabs[0].tabRenderer.endpoint.browseEndpoint.browseId
+        channelInfo = {
+          author: microformat.title,
+          authorId: channelId,
+          authorUrl: microformat.urlCanonical,
+          authorBanners: header.banner.thumbnails,
+          authorThumbnails: header.boxArt.thumbnails,
+          subscriberText: '',
+          subscriberCount: '',
+          description: microformat.description,
+          isFamilyFriendly: microformat.familySafe,
+          relatedChannels: [],
+          allowedRegions: microformat.availableCountries
+        }
+      } catch (e) {
+        channelInfo = null
+      }
     }
 
     return channelInfo
@@ -182,7 +212,7 @@ class YoutubeGrabber {
     }
   }
 
-  static async getChannelPlaylistsMore (continuation) {
+  static async doGetChannelPlaylistsMore (continuation) {
     const urlParams = queryString.stringify({
       continuation: continuation,
       ctoken: continuation
@@ -217,6 +247,40 @@ class YoutubeGrabber {
       items: nextPlaylists,
       continuation: nextContinuation
     }
+  }
+
+  static async getChannelPlaylistsMore(continuation) {
+    const continuationObj = JSON.parse(continuation)
+    const token = continuationObj.token
+    const channelType = continuationObj.channelType
+
+    let result = null
+    // Topic channel playlists don't always return on the first attempt; allow up to 5 tries.
+    let tries = channelType === 'topic' ? 5 : 1
+    while (!result && tries > 0) {
+      try {
+        result = await this.doGetChannelPlaylistsMore(token)
+      } catch (e) {
+        result = null
+      }
+      tries--;
+    }
+    if (!result) {
+      return {
+        items: [],
+        continuation: null
+      }
+    }
+    
+    // Modify continuation in result to include channelType
+    if (result.continuation) {
+      result.continuation = JSON.stringify({
+        token: result.continuation,
+        channelType: channelType
+      })
+    }
+
+    return result
   }
 
   static async searchChannel(channelId, query = '') {
