@@ -257,13 +257,18 @@ class YoutubeGrabber {
     let result = null
     // Topic channel playlists don't always return on the first attempt; allow up to 5 tries.
     let tries = channelType === 'topic' ? 5 : 1
-    while (!result && tries > 0) {
+    let currentTry = 0;
+    while (!result && currentTry < tries) {
+      if (currentTry > 0) {
+        // slight pause between requests to (hopefully) avoid getting HTTP 429
+        await YoutubeGrabberHelper.sleepRandom(1200, 1800);
+      }
       try {
         result = await this.doGetChannelPlaylistsMore(token)
       } catch (e) {
         result = null
       }
-      tries--;
+      currentTry++;
     }
     if (!result) {
       return {

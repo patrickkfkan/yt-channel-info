@@ -34,15 +34,26 @@ class PlaylistFetcher {
   }
 
   static async getChannelPlaylist(channelId, sort) {
+    // Different channel types are parsed differently, but we don't know the channel type until
+    // we've actually tried to parse it. So here we would have to get the playlists through trial 
+    // and error, in a predefined sequence. 
     // The fun part about topic channels is that playlists don't always get returned on the first try.
-    // You can even verify this on YouTube site.
-    // So for topic channels, we try up to 5 times before giving up.
-    const tries = ['defaultOrTopic', 'gaming', 'topic', 'topic', 'topic', 'topic'];
+    // You can even verify this on YouTube. For (possibly) topic channels, we try up to 5 times before 
+    // giving up, while adding a slight pause betweeen requests to (hopefully) avoid getting HTTP 429.
+    // The downside of this is the potentially long delay in getting results for topic channels.
+    const tries = ['defaultOrTopic', 'gaming', 'sleep', 'topic', 'sleep', 'topic', 'sleep', 'topic', 'sleep', 'topic'];
 
     let result = null;
     while (!result && tries.length) {
       try {
-        result = await this.doGetChannelPlaylist(channelId, tries.shift(), sort);
+        let currentTry = tries.shift();
+        if (currentTry === 'sleep') {
+          await helper.sleepRandom(1200, 1800);
+          result = null;
+        }
+        else {
+          result = await this.doGetChannelPlaylist(channelId, currentTry, sort);
+        }
       } catch (e) {
         result = null;
       }
