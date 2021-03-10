@@ -231,6 +231,11 @@ class YoutubeGrabberHelper {
     const metaTags = $('meta[name="title"]')
     return metaTags.length !== 0
   }
+
+  async sleepRandom(min, max) {
+    const ms = Math.round(Math.random() * (max - min) + min);
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 }
 
 module.exports = new YoutubeGrabberHelper()
